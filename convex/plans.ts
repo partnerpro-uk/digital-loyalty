@@ -22,31 +22,250 @@ async function requireSuperAdmin(ctx: any) {
   return { userId, appUser };
 }
 
-// List all plans
-export const listPlans = query({
+// Get all plans
+export const getAllPlans = query({
   args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("plans").collect();
+  handler: async (ctx, args) => {
+    try {
+      const userId = await getAuthUserId(ctx);
+      if (!userId) {
+        return [];
+      }
+
+      const appUser = await ctx.db
+        .query("appUsers")
+        .withIndex("by_auth_user")
+        .filter((q: any) => q.eq(q.field("authUserId"), userId))
+        .unique();
+
+      if (!appUser || appUser.role !== "superadmin") {
+        return [];
+      }
+      
+      const plans = await ctx.db.query("plans").collect();
+      return plans;
+    } catch (error) {
+      console.error("Error in getAllPlans:", error);
+      return [];
+    }
   },
 });
 
-// Create demo plans
-export const createDemoPlans = mutation({
+// List plans (for regular users)
+export const listPlans = query({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
+    const plans = await ctx.db
+      .query("plans")
+      .filter((q: any) => q.eq(q.field("status"), "active"))
+      .collect();
+    return plans;
+  },
+});
+
+// Create new plan
+export const createPlan = mutation({
+  args: {
+    name: v.string(),
+    type: v.union(v.literal("individual"), v.literal("franchise")),
+    price: v.number(),
+    billingPeriod: v.union(v.literal("monthly"), v.literal("annually")),
+    features: v.object({
+      maxUsers: v.number(),
+      maxSubAccounts: v.number(),
+      dataRetention: v.number(),
+      apiCalls: v.number(),
+      customDomain: v.boolean(),
+      customBranding: v.boolean(),
+      priority_support: v.boolean(),
+      analytics: v.boolean(),
+      integrations: v.boolean(),
+      multiLocation: v.boolean(),
+    }),
+    featureList: v.array(v.string()),
+    status: v.union(v.literal("active"), v.literal("inactive"), v.literal("discontinued")),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    // Create default permissions based on plan type and features
+    const defaultPermissions = {
+      customers: {
+        view: true,
+        create: true,
+        edit: true,
+        delete: args.features.analytics,
+        export: args.features.analytics,
+        import: args.features.integrations,
+      },
+      communications: {
+        sendEmail: true,
+        sendSMS: args.features.priority_support,
+        bulkMessage: args.features.analytics,
+        templates: true,
+      },
+      reports: {
+        basic: true,
+        advanced: args.features.analytics,
+        export: args.features.analytics,
+        customReports: args.features.analytics,
+      },
+      settings: {
+        billingView: true,
+        billingEdit: args.features.priority_support,
+        userManagement: args.features.maxUsers > 1,
+        integrations: args.features.integrations,
+      },
+      features: {
+        apiAccess: args.features.integrations,
+        webhooks: args.features.integrations,
+        customBranding: args.features.customBranding,
+        multiLocation: args.features.multiLocation,
+      },
+    };
+
+    const planId = await ctx.db.insert("plans", {
+      name: args.name,
+      type: args.type,
+      price: args.price,
+      billingPeriod: args.billingPeriod,
+      features: args.features,
+      featureList: args.featureList,
+      defaultPermissions,
+      status: args.status,
+    });
+
+    return planId;
+  },
+});
+
+// Update plan
+export const updatePlan = mutation({
+  args: {
+    planId: v.id("plans"),
+    updates: v.object({
+      name: v.optional(v.string()),
+      type: v.optional(v.union(v.literal("individual"), v.literal("franchise"))),
+      price: v.optional(v.number()),
+      billingPeriod: v.optional(v.union(v.literal("monthly"), v.literal("annually"))),
+      features: v.optional(v.object({
+        maxUsers: v.number(),
+        maxSubAccounts: v.number(),
+        dataRetention: v.number(),
+        apiCalls: v.number(),
+        customDomain: v.boolean(),
+        customBranding: v.boolean(),
+        priority_support: v.boolean(),
+        analytics: v.boolean(),
+        integrations: v.boolean(),
+        multiLocation: v.boolean(),
+      })),
+      featureList: v.optional(v.array(v.string())),
+      status: v.optional(v.union(v.literal("active"), v.literal("inactive"), v.literal("discontinued"))),
+    }),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) {
+      throw new Error("Plan not found");
+    }
+
+    // Update default permissions if features changed
+    let defaultPermissions = plan.defaultPermissions;
+    if (args.updates.features) {
+      defaultPermissions = {
+        customers: {
+          view: true,
+          create: true,
+          edit: true,
+          delete: args.updates.features.analytics,
+          export: args.updates.features.analytics,
+          import: args.updates.features.integrations,
+        },
+        communications: {
+          sendEmail: true,
+          sendSMS: args.updates.features.priority_support,
+          bulkMessage: args.updates.features.analytics,
+          templates: true,
+        },
+        reports: {
+          basic: true,
+          advanced: args.updates.features.analytics,
+          export: args.updates.features.analytics,
+          customReports: args.updates.features.analytics,
+        },
+        settings: {
+          billingView: true,
+          billingEdit: args.updates.features.priority_support,
+          userManagement: args.updates.features.maxUsers > 1,
+          integrations: args.updates.features.integrations,
+        },
+        features: {
+          apiAccess: args.updates.features.integrations,
+          webhooks: args.updates.features.integrations,
+          customBranding: args.updates.features.customBranding,
+          multiLocation: args.updates.features.multiLocation,
+        },
+      };
+    }
+
+    await ctx.db.patch(args.planId, {
+      ...args.updates,
+      defaultPermissions,
+    });
+
+    return { message: "Plan updated successfully" };
+  },
+});
+
+// Delete plan
+export const deletePlan = mutation({
+  args: {
+    planId: v.id("plans"),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) {
+      throw new Error("Plan not found");
+    }
+
+    // Check if any accounts are using this plan
+    const accountsUsingPlan = await ctx.db
+      .query("accounts")
+      .withIndex("by_plan")
+      .filter((q: any) => q.eq(q.field("planId"), args.planId))
+      .collect();
+
+    if (accountsUsingPlan.length > 0) {
+      throw new Error(`Cannot delete plan. ${accountsUsingPlan.length} accounts are currently using this plan.`);
+    }
+
+    await ctx.db.delete(args.planId);
+    return { message: "Plan deleted successfully" };
+  },
+});
+
+// Create default plans (Basic, Growth, Business)
+export const createDefaultPlans = mutation({
+  args: {},
+  handler: async (ctx, args) => {
     await requireSuperAdmin(ctx);
 
     // Check if plans already exist
     const existingPlans = await ctx.db.query("plans").collect();
     if (existingPlans.length > 0) {
-      return { message: "Demo plans already exist", count: existingPlans.length };
+      return { message: "Plans already exist", count: existingPlans.length };
     }
 
-    // Create Starter Plan
-    const starterPlan = await ctx.db.insert("plans", {
-      name: "Starter",
+    // Basic Plan
+    const basicPlan = await ctx.db.insert("plans", {
+      name: "Basic",
       type: "individual",
-      price: 29,
+      price: 19,
       billingPeriod: "monthly",
       features: {
         maxUsers: 3,
@@ -54,7 +273,20 @@ export const createDemoPlans = mutation({
         dataRetention: 365,
         apiCalls: 1000,
         customDomain: false,
+        customBranding: false,
+        priority_support: false,
+        analytics: false,
+        integrations: false,
+        multiLocation: false,
       },
+      featureList: [
+        "Up to 3 users",
+        "1,000 customers",
+        "Basic email support",
+        "Standard templates",
+        "Basic reporting",
+        "1 year data retention"
+      ],
       defaultPermissions: {
         customers: {
           view: true,
@@ -92,19 +324,35 @@ export const createDemoPlans = mutation({
       status: "active",
     });
 
-    // Create Professional Plan
-    const professionalPlan = await ctx.db.insert("plans", {
-      name: "Professional",
+    // Growth Plan
+    const growthPlan = await ctx.db.insert("plans", {
+      name: "Growth",
       type: "individual",
-      price: 79,
+      price: 49,
       billingPeriod: "monthly",
       features: {
         maxUsers: 10,
         maxSubAccounts: 0,
         dataRetention: 730,
-        apiCalls: 5000,
+        apiCalls: 10000,
         customDomain: true,
+        customBranding: true,
+        priority_support: true,
+        analytics: true,
+        integrations: true,
+        multiLocation: false,
       },
+      featureList: [
+        "Up to 10 users",
+        "10,000 customers",
+        "Priority email & chat support",
+        "Advanced analytics",
+        "Custom branding",
+        "API access & integrations",
+        "Bulk messaging",
+        "Data export",
+        "2 years data retention"
+      ],
       defaultPermissions: {
         customers: {
           view: true,
@@ -142,19 +390,37 @@ export const createDemoPlans = mutation({
       status: "active",
     });
 
-    // Create Enterprise Plan
-    const enterprisePlan = await ctx.db.insert("plans", {
-      name: "Enterprise",
+    // Business Plan
+    const businessPlan = await ctx.db.insert("plans", {
+      name: "Business",
       type: "franchise",
-      price: 199,
+      price: 99,
       billingPeriod: "monthly",
       features: {
         maxUsers: 50,
         maxSubAccounts: 25,
         dataRetention: 1095,
-        apiCalls: 25000,
+        apiCalls: 50000,
         customDomain: true,
+        customBranding: true,
+        priority_support: true,
+        analytics: true,
+        integrations: true,
+        multiLocation: true,
       },
+      featureList: [
+        "Up to 50 users",
+        "Unlimited customers",
+        "Phone & dedicated support",
+        "Advanced analytics & reporting",
+        "Full custom branding",
+        "Advanced API & webhooks",
+        "Multi-location management",
+        "Custom reporting",
+        "3 years data retention",
+        "Sub-account management",
+        "White-label options"
+      ],
       defaultPermissions: {
         customers: {
           view: true,
@@ -193,223 +459,12 @@ export const createDemoPlans = mutation({
     });
 
     return {
-      message: "Demo plans created successfully",
+      message: "Default plans created successfully with £ pricing",
       plans: {
-        starter: starterPlan,
-        professional: professionalPlan,
-        enterprise: enterprisePlan,
+        basic: basicPlan,
+        growth: growthPlan,
+        business: businessPlan,
       },
-    };
-  },
-});
-
-// Create demo accounts with trial functionality and demo users
-export const createDemoAccount = mutation({
-  args: {
-    name: v.string(),
-    type: v.union(v.literal("franchise"), v.literal("individual")),
-    planId: v.id("plans"),
-    adminEmail: v.string(),
-    adminName: v.string(),
-    trialDays: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    await requireSuperAdmin(ctx);
-
-    const plan = await ctx.db.get(args.planId);
-    if (!plan) {
-      throw new Error("Plan not found");
-    }
-
-    // Calculate trial end date (default 14 days)
-    const trialDays = args.trialDays || 14;
-    const trialEndsAt = Date.now() + (trialDays * 24 * 60 * 60 * 1000);
-
-    // Generate unique slug
-    const baseSlug = args.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-    let slug = baseSlug;
-    let counter = 1;
-    
-    while (true) {
-      const existingAccount = await ctx.db
-        .query("accounts")
-        .withIndex("by_slug")
-        .filter((q: any) => q.eq(q.field("slug"), slug))
-        .unique();
-      
-      if (!existingAccount) break;
-      slug = `${baseSlug}-${counter}`;
-      counter++;
-    }
-
-    // Create account
-    const accountId = await ctx.db.insert("accounts", {
-      type: args.type,
-      name: args.name,
-      slug,
-      primaryContact: {
-        name: args.adminName,
-        email: args.adminEmail,
-        phone: "+1-555-0123",
-      },
-      location: {
-        address: "123 Demo Street",
-        city: "Demo City",
-        state: "CA",
-        zip: "90210",
-        country: "US",
-        timezone: "America/Los_Angeles",
-      },
-      planId: args.planId,
-      planStatus: "trial",
-      trialEndsAt,
-      createdBy: (await getAuthUserId(ctx))!,
-      status: "active",
-      limits: {
-        users: plan.features.maxUsers,
-        subAccounts: plan.features.maxSubAccounts,
-      },
-    });
-
-    // Create demo users for the account
-    const demoUsers = [
-      {
-        firstName: "Admin",
-        lastName: "User",
-        email: args.adminEmail,
-        phone: "+1-555-0100",
-        role: "orgadmin" as const,
-        status: "active" as const,
-      },
-      {
-        firstName: "John",
-        lastName: "Manager",
-        email: `john.manager@${slug}.demo`,
-        phone: "+1-555-0101",
-        role: "clientuser" as const,
-        status: "active" as const,
-      },
-      {
-        firstName: "Sarah",
-        lastName: "Staff",
-        email: `sarah.staff@${slug}.demo`,
-        phone: "+1-555-0102",
-        role: "clientuser" as const,
-        status: "active" as const,
-      },
-    ];
-
-    // Create demo auth users and app users
-    for (const demoUser of demoUsers) {
-      // Create a placeholder auth user (in real app, this would be created during signup)
-      const authUserId = await ctx.db.insert("users", {
-        name: `${demoUser.firstName} ${demoUser.lastName}`,
-        email: demoUser.email,
-        emailVerificationTime: Date.now(),
-        isAnonymous: false,
-      });
-
-      // Create app user
-      const appUserId = await ctx.db.insert("appUsers", {
-        email: demoUser.email,
-        phone: demoUser.phone,
-        firstName: demoUser.firstName,
-        lastName: demoUser.lastName,
-        role: demoUser.role,
-        accountId,
-        accountType: args.type,
-        status: demoUser.status,
-        emailVerified: true,
-        lastLogin: Date.now(),
-        loginAttempts: 0,
-        authUserId,
-      });
-
-      // Create custom permissions for some users to demonstrate permission differences
-      if (demoUser.role === "clientuser" && demoUser.firstName === "Sarah") {
-        // Sarah has limited permissions
-        await ctx.db.insert("userPermissions", {
-          userId: appUserId,
-          accountId,
-          permissions: {
-            customers: {
-              view: true,
-              create: false,
-              edit: false,
-              delete: false,
-              export: false,
-              import: false,
-            },
-            communications: {
-              sendEmail: false,
-              sendSMS: false,
-              bulkMessage: false,
-              templates: false,
-            },
-            reports: {
-              basic: true,
-              advanced: false,
-              export: false,
-              customReports: false,
-            },
-            settings: {
-              billingView: false,
-              billingEdit: false,
-              userManagement: false,
-              integrations: false,
-            },
-            features: {
-              apiAccess: false,
-              webhooks: false,
-              customBranding: false,
-              multiLocation: false,
-            },
-          },
-        });
-      }
-    }
-
-    // Add some demo customers for the account
-    const demoCustomers = [
-      {
-        name: "John Smith",
-        email: "john.smith@example.com",
-        phone: "+1-555-0201",
-        tags: ["vip", "enterprise"],
-        notes: "Long-term customer, prefers email communication",
-      },
-      {
-        name: "Sarah Johnson",
-        email: "sarah.johnson@example.com",
-        phone: "+1-555-0202",
-        tags: ["new", "potential"],
-        notes: "Recently signed up, interested in premium features",
-      },
-      {
-        name: "Mike Davis",
-        email: "mike.davis@example.com",
-        tags: ["regular"],
-        notes: "Standard customer, monthly billing",
-      },
-    ];
-
-    for (const customer of demoCustomers) {
-      await ctx.db.insert("customers", {
-        accountId,
-        name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        status: "active",
-        tags: customer.tags,
-        notes: customer.notes,
-      });
-    }
-
-    return {
-      accountId,
-      message: `Demo account "${args.name}" created with ${trialDays}-day trial and ${demoUsers.length} demo users`,
-      trialEndsAt,
-      userCount: demoUsers.length,
     };
   },
 });
@@ -501,6 +556,126 @@ export const extendTrial = mutation({
     return { 
       message: `Trial extended by ${args.additionalDays} days`,
       newTrialEnd,
+    };
+  },
+});
+
+// Migration: Fix missing featureList field in existing plans
+export const fixMissingFeatureList = mutation({
+  args: {},
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const plans = await ctx.db.query("plans").collect();
+    let updatedCount = 0;
+
+    for (const plan of plans) {
+      // Check if plan is missing featureList
+      if (!(plan as any).featureList) {
+        let featureList: string[] = [];
+
+        // Generate appropriate feature list based on plan name and features
+        if (plan.name.toLowerCase().includes("starter") || plan.name.toLowerCase().includes("basic")) {
+          featureList = [
+            `Up to ${plan.features.maxUsers} users`,
+            "Basic customer management",
+            "Standard email templates",
+            "Basic reporting",
+            `${Math.floor(plan.features.dataRetention / 365)} year data retention`
+          ];
+        } else if (plan.name.toLowerCase().includes("growth")) {
+          featureList = [
+            `Up to ${plan.features.maxUsers} users`,
+            "Advanced customer management",
+            "Priority email & chat support",
+            "Advanced analytics",
+            "Custom branding",
+            "API access & integrations",
+            "Bulk messaging",
+            "Data export",
+            `${Math.floor(plan.features.dataRetention / 365)} years data retention`
+          ];
+        } else if (plan.name.toLowerCase().includes("business") || plan.name.toLowerCase().includes("franchise")) {
+          featureList = [
+            `Up to ${plan.features.maxUsers} users`,
+            "Unlimited customers",
+            "Phone & dedicated support",
+            "Advanced analytics & reporting",
+            "Full custom branding",
+            "Advanced API & webhooks",
+            "Multi-location management",
+            "Custom reporting",
+            `${Math.floor(plan.features.dataRetention / 365)} years data retention`,
+            "Sub-account management",
+            "White-label options"
+          ];
+        } else {
+          // Generic feature list
+          featureList = [
+            `Up to ${plan.features.maxUsers} users`,
+            "Customer management",
+            "Email support",
+            "Basic templates",
+            "Standard reporting"
+          ];
+        }
+
+        // Update the plan with the featureList
+        await ctx.db.patch(plan._id, {
+          featureList
+        });
+        updatedCount++;
+      }
+    }
+
+    return { 
+      message: `Migration completed. Updated ${updatedCount} plans with missing featureList field.`,
+      totalPlans: plans.length,
+      updatedPlans: updatedCount
+    };
+  },
+});
+
+// Migration function to fix existing plans missing featureList
+export const migrateExistingPlans = mutation({
+  args: {},
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const plans = await ctx.db.query("plans").collect();
+    let updatedCount = 0;
+
+    for (const plan of plans) {
+      // Check if plan is missing featureList field
+      if (!plan.featureList) {
+        // Create a default featureList based on plan features
+        const defaultFeatureList = [];
+        
+        if (plan.features.customDomain) defaultFeatureList.push("Custom Domain");
+        if (plan.features.customBranding) defaultFeatureList.push("Custom Branding");
+        if (plan.features.priority_support) defaultFeatureList.push("Priority Support");
+        if (plan.features.analytics) defaultFeatureList.push("Advanced Analytics");
+        if (plan.features.integrations) defaultFeatureList.push("Third-party Integrations");
+        if (plan.features.multiLocation) defaultFeatureList.push("Multi-location Support");
+        
+        // Add basic features based on plan type
+        if (plan.type === "individual") {
+          defaultFeatureList.unshift("Email Support", "Basic Dashboard", "Customer Management");
+        } else {
+          defaultFeatureList.unshift("Email Support", "Advanced Dashboard", "Customer Management", "Sub-account Management");
+        }
+
+        await ctx.db.patch(plan._id, {
+          featureList: defaultFeatureList,
+        });
+
+        updatedCount++;
+      }
+    }
+
+    return {
+      message: `Migration completed. Updated ${updatedCount} plans with missing featureList field.`,
+      updatedCount,
     };
   },
 });

@@ -110,7 +110,7 @@ export const listAccounts = query({
   },
 });
 
-// Get users for a specific account
+// Get users for a specific account (super admin only)
 export const getAccountUsers = query({
   args: {
     accountId: v.id("accounts"),
@@ -146,6 +146,24 @@ export const getAccountUsers = query({
     );
 
     return usersWithPermissions;
+  },
+});
+
+// Check if account has users (for displaying View As button)
+export const checkAccountHasUsers = query({
+  args: {
+    accountId: v.id("accounts"),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const users = await ctx.db
+      .query("appUsers")
+      .withIndex("by_account")
+      .filter((q: any) => q.eq(q.field("accountId"), args.accountId))
+      .collect();
+
+    return users.length > 0;
   },
 });
 
@@ -241,9 +259,35 @@ export const createAccount = mutation({
       },
     });
 
+    // Every account MUST have at least one user - create the admin user
+    // Create placeholder auth user (in real app, this would be created during signup)
+    const authUserId = await ctx.db.insert("users", {
+      name: `${args.adminUser.firstName} ${args.adminUser.lastName}`,
+      email: args.adminUser.email,
+      emailVerificationTime: undefined, // User needs to verify email
+      isAnonymous: false,
+    });
+
+    // Create the admin user for this account
+    const adminUserId = await ctx.db.insert("appUsers", {
+      email: args.adminUser.email,
+      phone: args.adminUser.phone,
+      firstName: args.adminUser.firstName,
+      lastName: args.adminUser.lastName,
+      role: "orgadmin",
+      accountId: accountId,
+      accountType: args.type,
+      status: "invited", // User starts as invited
+      emailVerified: false,
+      lastLogin: undefined,
+      loginAttempts: 0,
+      authUserId,
+    });
+
     return {
       accountId,
-      message: `Account "${args.name}" created with ${trialDays}-day trial`,
+      adminUserId,
+      message: `Account "${args.name}" created with ${trialDays}-day trial and admin user`,
       trialEndsAt,
     };
   },
@@ -399,6 +443,193 @@ export const updateAccountStatus = mutation({
     });
 
     return { success: true };
+  },
+});
+
+// Assign plan to account
+export const assignPlanToAccount = mutation({
+  args: {
+    accountId: v.id("accounts"),
+    planId: v.id("plans"),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const account = await ctx.db.get(args.accountId);
+    if (!account) {
+      throw new Error("Account not found");
+    }
+
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) {
+      throw new Error("Plan not found");
+    }
+
+    // Validate plan type matches account type
+    if (plan.type !== account.type) {
+      throw new Error(`Cannot assign ${plan.type} plan to ${account.type} account`);
+    }
+
+    await ctx.db.patch(args.accountId, {
+      planId: args.planId,
+    });
+
+    return {
+      message: `Plan "${plan.name}" assigned to account "${account.name}" successfully`,
+    };
+  },
+});
+
+// Update trial settings
+export const updateTrialSettings = mutation({
+  args: {
+    accountId: v.id("accounts"),
+    action: v.union(
+      v.literal("extend"),
+      v.literal("end"),
+      v.literal("restart"),
+      v.literal("set_custom_end")
+    ),
+    trialEndsAt: v.optional(v.number()),
+    extensionDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const account = await ctx.db.get(args.accountId);
+    if (!account) {
+      throw new Error("Account not found");
+    }
+
+    let newTrialEndsAt: number | undefined;
+    let newPlanStatus: "trial" | "active" | "past_due" | "cancelled" = account.planStatus;
+
+    switch (args.action) {
+      case "extend":
+        if (!args.extensionDays) {
+          throw new Error("Extension days required for extend action");
+        }
+        const currentEnd = account.trialEndsAt || Date.now();
+        newTrialEndsAt = currentEnd + (args.extensionDays * 24 * 60 * 60 * 1000);
+        newPlanStatus = "trial";
+        break;
+
+      case "end":
+        newTrialEndsAt = Date.now();
+        newPlanStatus = "active";
+        break;
+
+      case "restart":
+        const defaultTrialDays = 14;
+        newTrialEndsAt = Date.now() + (defaultTrialDays * 24 * 60 * 60 * 1000);
+        newPlanStatus = "trial";
+        break;
+
+      case "set_custom_end":
+        if (!args.trialEndsAt) {
+          throw new Error("Trial end date required for set_custom_end action");
+        }
+        newTrialEndsAt = args.trialEndsAt;
+        newPlanStatus = args.trialEndsAt > Date.now() ? "trial" : "active";
+        break;
+    }
+
+    await ctx.db.patch(args.accountId, {
+      trialEndsAt: newTrialEndsAt,
+      planStatus: newPlanStatus,
+    });
+
+    return {
+      message: `Trial settings updated successfully`,
+      newTrialEndsAt,
+      newPlanStatus,
+    };
+  },
+});
+
+// Update account billing status
+export const updateBillingStatus = mutation({
+  args: {
+    accountId: v.id("accounts"),
+    planStatus: v.union(
+      v.literal("trial"),
+      v.literal("active"),
+      v.literal("past_due"),
+      v.literal("cancelled")
+    ),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const account = await ctx.db.get(args.accountId);
+    if (!account) {
+      throw new Error("Account not found");
+    }
+
+    await ctx.db.patch(args.accountId, {
+      planStatus: args.planStatus,
+    });
+
+    return {
+      message: `Billing status updated to ${args.planStatus}`,
+    };
+  },
+});
+
+// Get account with plan for manage modal
+export const getAccountWithPlan = query({
+  args: {
+    accountId: v.id("accounts"),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const account = await ctx.db.get(args.accountId);
+    if (!account) {
+      throw new Error("Account not found");
+    }
+
+    const plan = await ctx.db.get(account.planId);
+    
+    return {
+      ...account,
+      plan,
+    };
+  },
+});
+
+// Get all accounts for plan manager (simplified version)
+export const getAccountsForPlanManager = query({
+  args: {},
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    const accounts = await ctx.db.query("accounts").collect();
+    
+    // Enhanced with plan information
+    const enhancedAccounts = await Promise.all(
+      accounts.map(async (account) => {
+        const plan = await ctx.db.get(account.planId);
+        
+        return {
+          _id: account._id,
+          name: account.name,
+          type: account.type,
+          status: account.status,
+          planStatus: account.planStatus,
+          planId: account.planId,
+          plan: plan ? {
+            _id: plan._id,
+            name: plan.name,
+            type: plan.type,
+            price: plan.price,
+            billingPeriod: plan.billingPeriod,
+          } : null,
+        };
+      })
+    );
+    
+    return enhancedAccounts;
   },
 });
 

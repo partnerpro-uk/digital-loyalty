@@ -122,16 +122,42 @@ export const deleteUser = mutation({
     userId: v.id("appUsers"),
   },
   handler: async (ctx, args) => {
-    await requireSuperAdmin(ctx);
+    const { userId: currentUserId, appUser: currentUser } = await requireSuperAdmin(ctx);
 
     const user = await ctx.db.get(args.userId);
     if (!user) {
       throw new Error("User not found");
     }
 
-    // Don't allow deleting other super admins
+    // Don't allow deleting yourself
+    if (user.authUserId === currentUserId) {
+      throw new Error("Cannot delete your own account");
+    }
+
+    // For super admins, require additional check that there will be at least one super admin left
     if (user.role === "superadmin") {
-      throw new Error("Cannot delete super admin users");
+      const allSuperAdmins = await ctx.db
+        .query("appUsers")
+        .withIndex("by_role")
+        .filter((q: any) => q.eq(q.field("role"), "superadmin"))
+        .collect();
+      
+      if (allSuperAdmins.length <= 1) {
+        throw new Error("Cannot delete the last super admin. System must have at least one super admin.");
+      }
+    }
+
+    // For client users, check if they're the last user in their account
+    if (user.role !== "superadmin" && user.accountId) {
+      const accountUsers = await ctx.db
+        .query("appUsers")
+        .withIndex("by_account")
+        .filter((q: any) => q.eq(q.field("accountId"), user.accountId))
+        .collect();
+      
+      if (accountUsers.length <= 1) {
+        throw new Error("Cannot delete the last user in an account. Each account must have at least one user.");
+      }
     }
 
     // Delete user permissions if they exist
@@ -168,5 +194,94 @@ export const resetUserPassword = mutation({
     // In a real implementation, this would trigger a password reset email
     // For now, we'll just return a success message
     return { message: "Password reset email sent to user" };
+  },
+});
+
+// Get all super admin users
+export const getSuperAdmins = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireSuperAdmin(ctx);
+
+    const superAdmins = await ctx.db
+      .query("appUsers")
+      .withIndex("by_role")
+      .filter((q: any) => q.eq(q.field("role"), "superadmin"))
+      .collect();
+
+    return superAdmins.map(admin => ({
+      ...admin,
+      accountName: "System", // Super admins don't belong to specific accounts
+    }));
+  },
+});
+
+// Get all client users (non-super admin users)
+export const getAllClientUsers = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireSuperAdmin(ctx);
+
+    const users = await ctx.db
+      .query("appUsers")
+      .filter((q: any) => q.neq(q.field("role"), "superadmin"))
+      .collect();
+
+    const accounts = await ctx.db.query("accounts").collect();
+    
+    // Create account lookup map
+    const accountMap = new Map();
+    accounts.forEach(account => {
+      accountMap.set(account._id, account);
+    });
+
+    // Enhance with account information
+    return users.map(user => {
+      const account = accountMap.get(user.accountId);
+      return {
+        ...user,
+        accountName: account?.name || "Unknown",
+        accountType: account?.type || "unknown",
+      };
+    });
+  },
+});
+
+// Create a new super admin invitation (they must complete signup themselves)
+export const createSuperAdmin = mutation({
+  args: {
+    firstName: v.string(),
+    lastName: v.string(),
+    email: v.string(),
+    phone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    // Check if email already exists
+    const existingUser = await ctx.db
+      .query("appUsers")
+      .withIndex("by_email")
+      .filter((q: any) => q.eq(q.field("email"), args.email))
+      .unique();
+
+    if (existingUser) {
+      throw new Error("User with this email already exists");
+    }
+
+    // In a real implementation, this would send an invitation email
+    // The actual user creation would happen when they complete signup
+    // For now, we'll create a pending invitation record
+    
+    // Note: This is a simplified approach. In production, you'd typically:
+    // 1. Create an invitation record
+    // 2. Send invitation email 
+    // 3. User clicks link and completes signup
+    // 4. System creates appUser with superadmin role
+    
+    return { 
+      message: "Super admin invitation would be sent to " + args.email + ". They must complete signup to activate their account.",
+      email: args.email 
+    };
   },
 });

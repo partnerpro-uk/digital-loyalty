@@ -4,65 +4,65 @@ import { api } from "../../convex/_generated/api";
 import { toast } from "sonner";
 
 export function SuperAdminUserManagement() {
-  const [activeTab, setActiveTab] = useState<"overview" | "search" | "accounts">("overview");
+  const [activeTab, setActiveTab] = useState<"superadmins" | "clients">("superadmins");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAccount, setSelectedAccount] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<any>(null);
-  const [showUserModal, setShowUserModal] = useState(false);
+  const [showCreateSuperAdminModal, setShowCreateSuperAdminModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<{id: string, name: string, type: 'superadmin' | 'client'} | null>(null);
 
   // Queries
-  const systemUserStats = useQuery(api.adminUsers.getSystemUserStats);
+  const superAdmins = useQuery(api.adminUsers.getSuperAdmins);
   const allAccounts = useQuery(api.admin.listAccounts, {});
-  const searchResults = useQuery(
-    api.adminUsers.searchUsers,
-    searchTerm.length >= 2 ? { searchTerm } : "skip"
-  );
+  const clientUsers = useQuery(api.adminUsers.getAllClientUsers);
   const accountUsers = useQuery(
     api.admin.getAccountUsers,
     selectedAccount ? { accountId: selectedAccount as any } : "skip"
   );
 
   // Mutations
+  const createSuperAdmin = useMutation(api.adminUsers.createSuperAdmin);
   const updateUserStatus = useMutation(api.adminUsers.updateUserStatus);
   const deleteUser = useMutation(api.adminUsers.deleteUser);
-  const resetUserPassword = useMutation(api.adminUsers.resetUserPassword);
 
-  const handleUpdateUserStatus = async (userId: string, status: "active" | "suspended" | "invited") => {
+  const handleCreateSuperAdmin = async (userData: any) => {
+    try {
+      await createSuperAdmin(userData);
+      toast.success("Super admin created successfully");
+      setShowCreateSuperAdminModal(false);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create super admin");
+    }
+  };
+
+  const handleUpdateUserStatus = async (userId: string, status: "active" | "suspended") => {
     try {
       await updateUserStatus({ userId: userId as any, status });
-      toast.success(`User status updated to ${status}`);
+      toast.success(`User ${status === "active" ? "activated" : "suspended"} successfully`);
     } catch (error: any) {
       toast.error(error.message || "Failed to update user status");
     }
   };
 
-  const handleDeleteUser = async (userId: string, userName: string) => {
-    if (!confirm(`Are you sure you want to permanently delete ${userName}? This action cannot be undone.`)) {
-      return;
-    }
+  const handleDeleteConfirm = (userId: string, userName: string, userType: 'superadmin' | 'client') => {
+    setUserToDelete({ id: userId, name: userName, type: userType });
+    setShowDeleteConfirmModal(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
 
     try {
-      await deleteUser({ userId: userId as any });
-      toast.success("User deleted successfully");
+      await deleteUser({ userId: userToDelete.id as any });
+      toast.success(`${userToDelete.type === 'superadmin' ? 'Super admin' : 'User'} deleted successfully`);
+      setShowDeleteConfirmModal(false);
+      setUserToDelete(null);
     } catch (error: any) {
       toast.error(error.message || "Failed to delete user");
     }
   };
 
-  const handleResetPassword = async (userId: string, userName: string) => {
-    if (!confirm(`Reset password for ${userName}? They will receive an email with reset instructions.`)) {
-      return;
-    }
-
-    try {
-      await resetUserPassword({ userId: userId as any });
-      toast.success("Password reset email sent");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to send password reset");
-    }
-  };
-
-  if (!systemUserStats || !allAccounts) {
+  if (!superAdmins || !allAccounts) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
@@ -71,17 +71,25 @@ export function SuperAdminUserManagement() {
   }
 
   const tabs = [
-    { id: "overview", label: "System Overview", icon: "📊" },
-    { id: "search", label: "Search Users", icon: "🔍" },
-    { id: "accounts", label: "By Account", icon: "🏢" },
+    { id: "superadmins", label: `Super Admins (${superAdmins?.length || 0})`, icon: "🔑" },
+    { id: "clients", label: "Client Account Users", icon: "👥" },
   ];
+
+  // Filter client users based on search
+  const filteredClientUsers = clientUsers?.filter((user: any) =>
+    !searchTerm || 
+    user.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.accountName.toLowerCase().includes(searchTerm.toLowerCase())
+  ) || [];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-        <p className="text-gray-600 mt-1">Manage users across all accounts in the system</p>
+        <p className="text-gray-600 mt-1">Manage system administrators and monitor client account users</p>
       </div>
 
       {/* Tabs */}
@@ -105,342 +113,284 @@ export function SuperAdminUserManagement() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === "overview" && (
-        <SystemOverviewTab stats={systemUserStats} />
-      )}
-
-      {activeTab === "search" && (
-        <SearchUsersTab
-          searchTerm={searchTerm}
-          setSearchTerm={setSearchTerm}
-          searchResults={searchResults}
-          onUserAction={(user, action) => {
-            if (action === "view") {
-              setSelectedUser(user);
-              setShowUserModal(true);
-            } else if (action === "suspend") {
-              handleUpdateUserStatus(user._id, "suspended");
-            } else if (action === "activate") {
-              handleUpdateUserStatus(user._id, "active");
-            } else if (action === "delete") {
-              handleDeleteUser(user._id, `${user.firstName} ${user.lastName}`);
-            } else if (action === "reset") {
-              handleResetPassword(user._id, `${user.firstName} ${user.lastName}`);
-            }
-          }}
+      {activeTab === "superadmins" && (
+        <SuperAdminsTab
+          superAdmins={superAdmins}
+          onCreateSuperAdmin={() => setShowCreateSuperAdminModal(true)}
+          onUpdateStatus={handleUpdateUserStatus}
+          onDeleteConfirm={handleDeleteConfirm}
         />
       )}
 
-      {activeTab === "accounts" && (
-        <AccountUsersTab
+      {activeTab === "clients" && (
+        <ClientUsersTab
           accounts={allAccounts}
+          clientUsers={filteredClientUsers}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
           selectedAccount={selectedAccount}
           setSelectedAccount={setSelectedAccount}
           accountUsers={accountUsers}
-          onUserAction={(user, action) => {
-            if (action === "view") {
-              setSelectedUser(user);
-              setShowUserModal(true);
-            } else if (action === "suspend") {
-              handleUpdateUserStatus(user._id, "suspended");
-            } else if (action === "activate") {
-              handleUpdateUserStatus(user._id, "active");
-            } else if (action === "delete") {
-              handleDeleteUser(user._id, `${user.firstName} ${user.lastName}`);
-            } else if (action === "reset") {
-              handleResetPassword(user._id, `${user.firstName} ${user.lastName}`);
-            }
-          }}
+          onUpdateStatus={handleUpdateUserStatus}
+          onDeleteConfirm={handleDeleteConfirm}
         />
       )}
 
-      {/* User Details Modal */}
-      {showUserModal && selectedUser && (
-        <UserDetailsModal
-          user={selectedUser}
+      {/* Create Super Admin Modal */}
+      {showCreateSuperAdminModal && (
+        <CreateSuperAdminModal
+          onClose={() => setShowCreateSuperAdminModal(false)}
+          onSubmit={handleCreateSuperAdmin}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && userToDelete && (
+        <DeleteConfirmationModal
+          userName={userToDelete.name}
+          userType={userToDelete.type}
           onClose={() => {
-            setShowUserModal(false);
-            setSelectedUser(null);
+            setShowDeleteConfirmModal(false);
+            setUserToDelete(null);
           }}
-          onAction={(action) => {
-            if (action === "suspend") {
-              handleUpdateUserStatus(selectedUser._id, "suspended");
-            } else if (action === "activate") {
-              handleUpdateUserStatus(selectedUser._id, "active");
-            } else if (action === "delete") {
-              handleDeleteUser(selectedUser._id, `${selectedUser.firstName} ${selectedUser.lastName}`);
-              setShowUserModal(false);
-              setSelectedUser(null);
-            } else if (action === "reset") {
-              handleResetPassword(selectedUser._id, `${selectedUser.firstName} ${selectedUser.lastName}`);
-            }
-          }}
+          onConfirm={handleDeleteUser}
         />
       )}
     </div>
   );
 }
 
-function SystemOverviewTab({ stats }: { stats: any }) {
-  const statCards = [
-    {
-      label: "Total Users",
-      value: stats.totalUsers,
-      change: "+12%",
-      changeType: "positive",
-      icon: "👥",
-      color: "blue"
-    },
-    {
-      label: "Active Users",
-      value: stats.activeUsers,
-      change: "+8%",
-      changeType: "positive",
-      icon: "✅",
-      color: "green"
-    },
-    {
-      label: "Suspended Users",
-      value: stats.suspendedUsers,
-      change: "-5%",
-      changeType: "negative",
-      icon: "⚠️",
-      color: "red"
-    },
-    {
-      label: "Invited Users",
-      value: stats.invitedUsers,
-      change: "+15%",
-      changeType: "positive",
-      icon: "📧",
-      color: "yellow"
-    },
-  ];
-
-  const roleStats = [
-    {
-      label: "Super Admins",
-      value: stats.superAdmins,
-      percentage: Math.round((stats.superAdmins / stats.totalUsers) * 100),
-      color: "bg-red-500"
-    },
-    {
-      label: "Organization Admins",
-      value: stats.orgAdmins,
-      percentage: Math.round((stats.orgAdmins / stats.totalUsers) * 100),
-      color: "bg-purple-500"
-    },
-    {
-      label: "Client Users",
-      value: stats.clientUsers,
-      percentage: Math.round((stats.clientUsers / stats.totalUsers) * 100),
-      color: "bg-blue-500"
-    },
-  ];
-
-  return (
-    <div className="space-y-8">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {statCards.map((stat) => (
-          <div key={stat.label} className="bg-white rounded-2xl border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
-                <span className="text-xl">{stat.icon}</span>
-              </div>
-              <span className={`text-sm font-medium px-2 py-1 rounded-full ${
-                stat.changeType === 'positive' ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'
-              }`}>
-                {stat.change}
-              </span>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
-              <div className="text-sm text-gray-600">{stat.label}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Role Distribution */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">User Roles Distribution</h2>
-          <div className="space-y-4">
-            {roleStats.map((stat) => (
-              <div key={stat.label} className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium text-gray-700">{stat.label}</span>
-                  <span className="text-sm font-semibold text-gray-900">{stat.value}</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className={`h-2 rounded-full ${stat.color}`}
-                    style={{ width: `${stat.percentage}%` }}
-                  ></div>
-                </div>
-                <div className="text-xs text-gray-500">{stat.percentage}% of total users</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Recent Activity</h2>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center p-4 bg-green-50 rounded-xl">
-              <span className="text-sm font-medium text-gray-700">New Users (Last 7 days)</span>
-              <span className="text-sm font-semibold text-green-700">{stats.newUsersWeek}</span>
-            </div>
-            
-            <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl">
-              <span className="text-sm font-medium text-gray-700">Active Logins (Last 24h)</span>
-              <span className="text-sm font-semibold text-blue-700">{stats.activeLogins24h}</span>
-            </div>
-            
-            <div className="flex justify-between items-center p-4 bg-yellow-50 rounded-xl">
-              <span className="text-sm font-medium text-gray-700">Password Resets (Last 7 days)</span>
-              <span className="text-sm font-semibold text-yellow-700">{stats.passwordResets}</span>
-            </div>
-            
-            <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
-              <span className="text-sm font-medium text-gray-700">Email Verification Pending</span>
-              <span className="text-sm font-semibold text-gray-700">{stats.emailVerificationPending}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SearchUsersTab({ searchTerm, setSearchTerm, searchResults, onUserAction }: {
-  searchTerm: string;
-  setSearchTerm: (term: string) => void;
-  searchResults: any;
-  onUserAction: (user: any, action: string) => void;
+function SuperAdminsTab({ superAdmins, onCreateSuperAdmin, onUpdateStatus, onDeleteConfirm }: {
+  superAdmins: any[];
+  onCreateSuperAdmin: () => void;
+  onUpdateStatus: (userId: string, status: "active" | "suspended") => void;
+  onDeleteConfirm: (userId: string, userName: string, userType: 'superadmin' | 'client') => void;
 }) {
   return (
     <div className="space-y-6">
-      {/* Search Input */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <div className="max-w-md">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Search Users
-          </label>
-          <input
-            type="text"
-            placeholder="Search by name, email, or phone..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
-          />
-          <p className="text-sm text-gray-500 mt-2">
-            Enter at least 2 characters to search
-          </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">System Administrators</h2>
+          <p className="text-sm text-gray-600">Manage users with system-wide administrative access</p>
         </div>
+        <button
+          onClick={onCreateSuperAdmin}
+          className="bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors flex items-center space-x-2"
+        >
+          <span>➕</span>
+          <span>Add Super Admin</span>
+        </button>
       </div>
 
-      {/* Search Results */}
-      {searchResults && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Search Results ({searchResults.length})
-            </h2>
-          </div>
-          
-          {searchResults.length > 0 ? (
-            <UserTable users={searchResults} onUserAction={onUserAction} showAccount={true} />
-          ) : (
-            <div className="p-12 text-center">
-              <div className="text-gray-500">No users found matching your search criteria</div>
-            </div>
-          )}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Administrator
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Last Login
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Created
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {superAdmins.map((admin) => (
+              <tr key={admin._id} className="hover:bg-gray-50">
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <div className="flex items-center">
+                    <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                      <span className="text-purple-600 font-semibold">
+                        {admin.firstName[0]}{admin.lastName[0]}
+                      </span>
+                    </div>
+                    <div className="ml-4">
+                      <div className="text-sm font-medium text-gray-900">
+                        {admin.firstName} {admin.lastName}
+                      </div>
+                      <div className="text-sm text-gray-500">{admin.email}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                    admin.status === "active" 
+                      ? "bg-green-100 text-green-800"
+                      : admin.status === "invited"
+                      ? "bg-yellow-100 text-yellow-800"
+                      : "bg-red-100 text-red-800"
+                  }`}>
+                    {admin.status}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {admin.lastLogin ? new Date(admin.lastLogin).toLocaleDateString() : "Never"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {new Date(admin._creationTime).toLocaleDateString()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <div className="flex space-x-2">
+                    {admin.status === "suspended" && (
+                      <button
+                        onClick={() => onUpdateStatus(admin._id, "active")}
+                        className="text-green-600 hover:text-green-900"
+                      >
+                        Activate
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onDeleteConfirm(admin._id, `${admin.firstName} ${admin.lastName}`, 'superadmin')}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {superAdmins.length === 0 && (
+        <div className="text-center py-8">
+          <div className="text-gray-500">No super administrators found</div>
         </div>
       )}
     </div>
   );
 }
 
-function AccountUsersTab({ accounts, selectedAccount, setSelectedAccount, accountUsers, onUserAction }: {
+function ClientUsersTab({ accounts, clientUsers, searchTerm, setSearchTerm, selectedAccount, setSelectedAccount, accountUsers, onUpdateStatus, onDeleteConfirm }: {
   accounts: any[];
+  clientUsers: any[];
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
   selectedAccount: string | null;
   setSelectedAccount: (accountId: string | null) => void;
   accountUsers: any;
-  onUserAction: (user: any, action: string) => void;
+  onUpdateStatus: (userId: string, status: "active" | "suspended") => void;
+  onDeleteConfirm: (userId: string, userName: string, userType: 'superadmin' | 'client') => void;
 }) {
+  const [viewMode, setViewMode] = useState<"all" | "by-account">("all");
+
   return (
     <div className="space-y-6">
-      {/* Account Selection */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Select Account</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {accounts.map((account) => (
-            <div
-              key={account._id}
-              className={`border rounded-xl p-4 cursor-pointer transition-colors ${
-                selectedAccount === account._id
-                  ? "border-gray-900 bg-gray-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-              onClick={() => setSelectedAccount(account._id)}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Client Account Users</h2>
+          <p className="text-sm text-gray-600">Monitor and overview users across all client accounts</p>
+        </div>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-600">View:</span>
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as "all" | "by-account")}
+              className="px-3 py-1 border border-gray-300 rounded text-sm"
             >
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-medium text-gray-900 truncate">{account.name}</h3>
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                  account.type === "franchise" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
-                }`}>
-                  {account.type}
-                </span>
-              </div>
-              <p className="text-sm text-gray-600 truncate">{account.primaryContact.email}</p>
-              <div className="mt-2 text-sm text-gray-500">
-                {account.userCount} users
-              </div>
-            </div>
-          ))}
+              <option value="all">All Users</option>
+              <option value="by-account">By Account</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Account Users */}
-      {selectedAccount && accountUsers && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Account Users ({accountUsers.length})
-            </h2>
-          </div>
-          
-          {accountUsers.length > 0 ? (
-            <UserTable users={accountUsers} onUserAction={onUserAction} showAccount={false} />
-          ) : (
-            <div className="p-12 text-center">
-              <div className="text-gray-500">No users found for this account</div>
+      {viewMode === "all" ? (
+        <>
+          {/* Search */}
+          <div className="flex items-center space-x-4">
+            <div className="flex-1">
+              <input
+                type="text"
+                placeholder="Search users by name, email, or account..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+              />
             </div>
-          )}
+            <div className="text-sm text-gray-500">
+              {clientUsers.length} users found
+            </div>
+          </div>
+
+          {/* All Users Table */}
+          <ClientUsersTable users={clientUsers} onUpdateStatus={onUpdateStatus} onDeleteConfirm={onDeleteConfirm} showAccount={true} />
+        </>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Account Selection */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900">Select Account</h3>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {accounts.map((account) => (
+                <button
+                  key={account._id}
+                  onClick={() => setSelectedAccount(account._id)}
+                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                    selectedAccount === account._id
+                      ? "border-gray-900 bg-gray-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="font-medium text-gray-900">{account.name}</div>
+                  <div className="text-sm text-gray-500">
+                    {account.userCount} users • {account.type}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">
+                    Created: {new Date(account._creationTime).toLocaleDateString()}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Account Users */}
+          <div className="lg:col-span-2">
+            {selectedAccount && accountUsers ? (
+              <div className="space-y-4">
+                <h3 className="font-medium text-gray-900">
+                  Users in {accounts.find(a => a._id === selectedAccount)?.name}
+                </h3>
+                <ClientUsersTable users={accountUsers} onUpdateStatus={onUpdateStatus} onDeleteConfirm={onDeleteConfirm} showAccount={false} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 border-2 border-dashed border-gray-300 rounded-lg">
+                <div className="text-center">
+                  <div className="text-gray-500">Select an account to view its users</div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function UserTable({ users, onUserAction, showAccount }: {
+function ClientUsersTable({ users, onUpdateStatus, onDeleteConfirm, showAccount }: {
   users: any[];
-  onUserAction: (user: any, action: string) => void;
+  onUpdateStatus: (userId: string, status: "active" | "suspended") => void;
+  onDeleteConfirm: (userId: string, userName: string, userType: 'superadmin' | 'client') => void;
   showAccount: boolean;
 }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <table className="w-full">
         <thead className="bg-gray-50">
           <tr>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               User
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Contact
             </th>
             {showAccount && (
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -457,6 +407,9 @@ function UserTable({ users, onUserAction, showAccount }: {
               Last Login
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Created
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Actions
             </th>
           </tr>
@@ -465,18 +418,19 @@ function UserTable({ users, onUserAction, showAccount }: {
           {users.map((user) => (
             <tr key={user._id} className="hover:bg-gray-50">
               <td className="px-6 py-4 whitespace-nowrap">
-                <div>
-                  <div className="text-sm font-medium text-gray-900">
-                    {user.firstName} {user.lastName}
+                <div className="flex items-center">
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-600 text-xs font-semibold">
+                      {user.firstName[0]}{user.lastName[0]}
+                    </span>
                   </div>
-                  <div className="text-sm text-gray-500">
-                    ID: {user._id.slice(-8)}
+                  <div className="ml-3">
+                    <div className="text-sm font-medium text-gray-900">
+                      {user.firstName} {user.lastName}
+                    </div>
+                    <div className="text-sm text-gray-500">{user.email}</div>
                   </div>
                 </div>
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                <div className="text-sm text-gray-900">{user.email}</div>
-                <div className="text-sm text-gray-500">{user.phone}</div>
               </td>
               {showAccount && (
                 <td className="px-6 py-4 whitespace-nowrap">
@@ -485,10 +439,8 @@ function UserTable({ users, onUserAction, showAccount }: {
                 </td>
               )}
               <td className="px-6 py-4 whitespace-nowrap">
-                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                  user.role === "superadmin" 
-                    ? "bg-red-100 text-red-800"
-                    : user.role === "orgadmin" 
+                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                  user.role === "orgadmin" 
                     ? "bg-purple-100 text-purple-800"
                     : "bg-blue-100 text-blue-800"
                 }`}>
@@ -496,61 +448,34 @@ function UserTable({ users, onUserAction, showAccount }: {
                 </span>
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                <div className="flex flex-col space-y-1">
-                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                    user.status === "active" 
-                      ? "bg-green-100 text-green-800"
-                      : user.status === "invited"
-                      ? "bg-yellow-100 text-yellow-800"
-                      : "bg-red-100 text-red-800"
-                  }`}>
-                    {user.status}
-                  </span>
-                  {user.emailVerified ? (
-                    <span className="text-xs text-green-600">✓ Verified</span>
-                  ) : (
-                    <span className="text-xs text-red-600">✗ Unverified</span>
-                  )}
-                </div>
+                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                  user.status === "active" 
+                    ? "bg-green-100 text-green-800"
+                    : user.status === "invited"
+                    ? "bg-yellow-100 text-yellow-800"
+                    : "bg-red-100 text-red-800"
+                }`}>
+                  {user.status}
+                </span>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                {user.lastLogin ? (
-                  new Date(user.lastLogin).toLocaleDateString()
-                ) : (
-                  "Never"
-                )}
+                {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : "Never"}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {new Date(user._creationTime).toLocaleDateString()}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                 <div className="flex space-x-2">
-                  <button
-                    onClick={() => onUserAction(user, "view")}
-                    className="text-blue-600 hover:text-blue-900"
-                  >
-                    View
-                  </button>
-                  {user.status === "active" ? (
+                  {user.status === "suspended" && (
                     <button
-                      onClick={() => onUserAction(user, "suspend")}
-                      className="text-orange-600 hover:text-orange-900"
-                    >
-                      Suspend
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onUserAction(user, "activate")}
+                      onClick={() => onUpdateStatus(user._id, "active")}
                       className="text-green-600 hover:text-green-900"
                     >
                       Activate
                     </button>
                   )}
                   <button
-                    onClick={() => onUserAction(user, "reset")}
-                    className="text-purple-600 hover:text-purple-900"
-                  >
-                    Reset
-                  </button>
-                  <button
-                    onClick={() => onUserAction(user, "delete")}
+                    onClick={() => onDeleteConfirm(user._id, `${user.firstName} ${user.lastName}`, 'client')}
                     className="text-red-600 hover:text-red-900"
                   >
                     Delete
@@ -561,169 +486,154 @@ function UserTable({ users, onUserAction, showAccount }: {
           ))}
         </tbody>
       </table>
+      
+      {users.length === 0 && (
+        <div className="text-center py-8">
+          <div className="text-gray-500">No users found</div>
+        </div>
+      )}
     </div>
   );
 }
 
-function UserDetailsModal({ user, onClose, onAction }: {
-  user: any;
+function DeleteConfirmationModal({ userName, userType, onClose, onConfirm }: {
+  userName: string;
+  userType: 'superadmin' | 'client';
   onClose: () => void;
-  onAction: (action: string) => void;
+  onConfirm: () => void;
 }) {
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">User Details</h2>
-            <p className="text-sm text-gray-600 mt-1">{user.firstName} {user.lastName}</p>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+        <div className="flex items-center mb-4">
+          <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mr-4">
+            <span className="text-red-600 text-xl">🗑️</span>
           </div>
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Delete {userType === 'superadmin' ? 'Super Admin' : 'User'}</h3>
+            <p className="text-sm text-gray-600">This action cannot be undone</p>
+          </div>
+        </div>
+        
+        <div className="mb-6">
+          <p className="text-gray-700">
+            Are you sure you want to delete <strong>{userName}</strong>? 
+            This will permanently remove their account and all associated data.
+          </p>
+        </div>
+        
+        <div className="flex justify-end space-x-3">
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Delete {userType === 'superadmin' ? 'Super Admin' : 'User'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateSuperAdminModal({ onClose, onSubmit }: {
+  onClose: () => void;
+  onSubmit: (userData: any) => void;
+}) {
+  const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Create Super Admin</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Basic Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <h3 className="text-sm font-medium text-gray-900 mb-3">Personal Information</h3>
-              <div className="space-y-2">
-                <div>
-                  <span className="text-sm text-gray-500">Name:</span>
-                  <span className="text-sm text-gray-900 ml-2">{user.firstName} {user.lastName}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Email:</span>
-                  <span className="text-sm text-gray-900 ml-2">{user.email}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Phone:</span>
-                  <span className="text-sm text-gray-900 ml-2">{user.phone}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">User ID:</span>
-                  <span className="text-sm text-gray-900 ml-2 font-mono">{user._id}</span>
-                </div>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
+              <input
+                type="text"
+                required
+                value={formData.firstName}
+                onChange={(e) => setFormData({...formData, firstName: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+              />
             </div>
-
             <div>
-              <h3 className="text-sm font-medium text-gray-900 mb-3">Account Information</h3>
-              <div className="space-y-2">
-                <div>
-                  <span className="text-sm text-gray-500">Role:</span>
-                  <span className={`text-sm ml-2 px-2 py-1 rounded-full ${
-                    user.role === "superadmin" 
-                      ? "bg-red-100 text-red-800"
-                      : user.role === "orgadmin" 
-                      ? "bg-purple-100 text-purple-800"
-                      : "bg-blue-100 text-blue-800"
-                  }`}>
-                    {user.role}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Status:</span>
-                  <span className={`text-sm ml-2 px-2 py-1 rounded-full ${
-                    user.status === "active" 
-                      ? "bg-green-100 text-green-800"
-                      : user.status === "invited"
-                      ? "bg-yellow-100 text-yellow-800"
-                      : "bg-red-100 text-red-800"
-                  }`}>
-                    {user.status}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Email Verified:</span>
-                  <span className={`text-sm ml-2 ${user.emailVerified ? 'text-green-600' : 'text-red-600'}`}>
-                    {user.emailVerified ? '✓ Yes' : '✗ No'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Account:</span>
-                  <span className="text-sm text-gray-900 ml-2">{user.accountName}</span>
-                </div>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+              <input
+                type="text"
+                required
+                value={formData.lastName}
+                onChange={(e) => setFormData({...formData, lastName: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+              />
             </div>
           </div>
-
-          {/* Activity */}
+          
           <div>
-            <h3 className="text-sm font-medium text-gray-900 mb-3">Activity</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="text-sm text-gray-500">Created</div>
-                <div className="text-sm text-gray-900 font-medium">
-                  {new Date(user._creationTime).toLocaleDateString()}
-                </div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="text-sm text-gray-500">Last Login</div>
-                <div className="text-sm text-gray-900 font-medium">
-                  {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : "Never"}
-                </div>
-              </div>
-            </div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+            <input
+              type="email"
+              required
+              value={formData.email}
+              onChange={(e) => setFormData({...formData, email: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+            />
           </div>
-
-          {/* Permissions */}
-          {user.permissions && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-900 mb-3">Custom Permissions</h3>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <pre className="text-xs text-gray-700 whitespace-pre-wrap">
-                  {JSON.stringify(user.permissions, null, 2)}
-                </pre>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center justify-between p-6 border-t border-gray-200">
-          <div className="text-sm text-gray-500">
-            Last updated: {new Date(user._creationTime).toLocaleString()}
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <input
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => setFormData({...formData, phone: e.target.value})}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-gray-900"
+            />
           </div>
-          <div className="flex space-x-3">
-            {user.status === "active" ? (
-              <button
-                onClick={() => onAction("suspend")}
-                className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors"
-              >
-                Suspend User
-              </button>
-            ) : (
-              <button
-                onClick={() => onAction("activate")}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
-              >
-                Activate User
-              </button>
-            )}
+          
+          <div className="flex justify-end space-x-3 pt-4">
             <button
-              onClick={() => onAction("reset")}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors"
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
             >
-              Reset Password
+              Cancel
             </button>
             <button
-              onClick={() => onAction("delete")}
-              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+              type="submit"
+              className="bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-gray-800"
             >
-              Delete User
+              Create Super Admin
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );
-}
+} 

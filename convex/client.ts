@@ -303,14 +303,35 @@ export const addCustomer = mutation({
       throw new Error("No account context");
     }
 
+    // Parse name into firstName and lastName
+    const nameParts = args.name.trim().split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
     const customerId = await ctx.db.insert("customers", {
       accountId: currentAccount._id,
-      name: args.name,
+      firstName,
+      lastName,
       email: args.email,
       phone: args.phone,
-      status: "active",
+      birthday: undefined,
+      utmSource: undefined,
+      utmMedium: undefined,
+      utmCampaign: undefined,
+      referredBy: undefined,
+      loyaltyCards: [],
+      totalVisits: 0,
+      lifetimeSpend: 0,
+      lastVisited: undefined,
+      pointsBalance: 0,
+      stampsBalance: 0,
+      rewardsEarned: 0,
+      rewardsAvailable: 0,
+      referralCount: 0,
       tags: args.tags,
-      notes: args.notes,
+      customFields: {},
+      status: "active",
+      notes: args.notes || "",
     });
 
     return { customerId, message: "Customer added successfully" };

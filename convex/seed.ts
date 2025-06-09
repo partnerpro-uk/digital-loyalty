@@ -22,7 +22,19 @@ export const seedData = mutation({
         dataRetention: 365,
         apiCalls: 1000,
         customDomain: false,
+        customBranding: false,
+        priority_support: false,
+        analytics: false,
+        integrations: false,
+        multiLocation: false,
       },
+      featureList: [
+        "Up to 3 users",
+        "1,000 customers",
+        "Basic email support",
+        "Standard templates",
+        "Basic reporting"
+      ],
       defaultPermissions: {
         customers: {
           view: true,
@@ -71,7 +83,20 @@ export const seedData = mutation({
         dataRetention: 730,
         apiCalls: 5000,
         customDomain: true,
+        customBranding: true,
+        priority_support: true,
+        analytics: true,
+        integrations: true,
+        multiLocation: false,
       },
+      featureList: [
+        "Up to 10 users",
+        "10,000 customers",
+        "Priority email & chat support",
+        "Advanced analytics",
+        "Custom branding",
+        "API access & integrations"
+      ],
       defaultPermissions: {
         customers: {
           view: true,
@@ -120,7 +145,22 @@ export const seedData = mutation({
         dataRetention: 1095,
         apiCalls: 25000,
         customDomain: true,
+        customBranding: true,
+        priority_support: true,
+        analytics: true,
+        integrations: true,
+        multiLocation: true,
       },
+      featureList: [
+        "Up to 50 users",
+        "Unlimited customers",
+        "Phone & dedicated support",
+        "Advanced analytics & reporting",
+        "Full custom branding",
+        "Advanced API & webhooks",
+        "Multi-location management",
+        "Sub-account management"
+      ],
       defaultPermissions: {
         customers: {
           view: true,

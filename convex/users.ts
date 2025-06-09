@@ -42,6 +42,7 @@ export const createUserProfile = mutation({
       emailVerified: true,
       lastLogin: Date.now(),
       loginAttempts: 0,
+      testMessage: `Profile created at ${new Date().toLocaleString()}`,
     });
 
     return profileId;

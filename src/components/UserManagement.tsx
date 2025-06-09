@@ -26,7 +26,7 @@ export function UserManagement({ accountId, accountName, userRole, onBack }: Use
   const updateUser = useMutation(api.userManagement.updateUser);
   const updateUserPermissions = useMutation(api.userManagement.updateUserPermissions);
   const deleteUser = useMutation(api.userManagement.deleteUser);
-  const createDemoUsers = useMutation(api.userManagement.createDemoUsers);
+
 
   const [userForm, setUserForm] = useState({
     firstName: "",
@@ -72,14 +72,7 @@ export function UserManagement({ accountId, accountName, userRole, onBack }: Use
     }
   };
 
-  const handleCreateDemoUsers = async () => {
-    try {
-      const result = await createDemoUsers({ accountId: accountId as any });
-      toast.success(result.message);
-    } catch (error: any) {
-      toast.error(error.message || "Failed to create demo users");
-    }
-  };
+
 
   if (!accountUsers) {
     return (
@@ -111,14 +104,7 @@ export function UserManagement({ accountId, accountName, userRole, onBack }: Use
             <p className="text-gray-600">{accountName}</p>
           </div>
         </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={handleCreateDemoUsers}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
-          >
-            Create Demo Users
-          </button>
-        </div>
+
       </div>
 
       {/* Tabs */}

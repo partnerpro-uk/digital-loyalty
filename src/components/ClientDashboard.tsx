@@ -3,6 +3,9 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { toast } from "sonner";
 import { UserManagement } from "./UserManagement";
+import IndividualDashboard from "./IndividualDashboard";
+import { Customers } from "./Customers";
+import { CardBuilder } from "./CardBuilder";
 
 interface ClientDashboardProps {
   user: any;
@@ -10,52 +13,19 @@ interface ClientDashboardProps {
 }
 
 export function ClientDashboard({ user, sessionToken }: ClientDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "customers" | "communications" | "users">("dashboard");
-  const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [activeTab, setActiveTab] = useState<"dashboard" | "customers" | "communications" | "cardbuilder" | "users">("dashboard");
   const [showUserManagement, setShowUserManagement] = useState(false);
 
   const dashboardData = useQuery(api.client.getDashboardData, { 
     sessionToken: sessionToken || undefined 
   });
-  const customers = useQuery(api.client.getCustomers, { 
-    limit: 10,
-    sessionToken: sessionToken || undefined 
-  });
-  const addCustomer = useMutation(api.client.addCustomer);
 
-  const [customerForm, setCustomerForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    tags: "",
-    notes: "",
-  });
 
-  const handleAddCustomer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      await addCustomer({
-        name: customerForm.name,
-        email: customerForm.email,
-        phone: customerForm.phone || undefined,
-        tags: customerForm.tags.split(",").map(tag => tag.trim()).filter(Boolean),
-        notes: customerForm.notes || undefined,
-        sessionToken: sessionToken || undefined,
-      });
-      
-      toast.success("Customer added successfully");
-      setShowAddCustomer(false);
-      setCustomerForm({ name: "", email: "", phone: "", tags: "", notes: "" });
-    } catch (error: any) {
-      toast.error(error.message || "Failed to add customer");
-    }
-  };
 
   if (!dashboardData) {
     return (
       <div className="flex justify-center items-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-900 animate-spin"></div>
       </div>
     );
   }
@@ -76,6 +46,7 @@ export function ClientDashboard({ user, sessionToken }: ClientDashboardProps) {
     { id: "dashboard", label: "Dashboard", icon: "📊" },
     { id: "customers", label: "Customers", icon: "👥" },
     { id: "communications", label: "Communications", icon: "📧" },
+    { id: "cardbuilder", label: "Card Builder", icon: "🎫" },
     { id: "users", label: "Users", icon: "👤" },
   ];
 
@@ -83,159 +54,126 @@ export function ClientDashboard({ user, sessionToken }: ClientDashboardProps) {
   const visibleTabs = tabs.filter(tab => {
     if (tab.id === "customers") return dashboardData.permissions?.customers?.view;
     if (tab.id === "communications") return dashboardData.permissions?.communications?.sendEmail;
+    if (tab.id === "cardbuilder") return true; // Card Builder available to all client account users
     if (tab.id === "users") return dashboardData.userInfo.role === "orgadmin" && dashboardData.permissions?.settings?.userManagement;
     return true;
   });
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-white">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-sm border-r">
-        <div className="p-6">
-          <h2 className="text-lg font-semibold text-gray-900">{dashboardData.account.name}</h2>
-          <p className="text-sm text-gray-600">{dashboardData.userInfo.email}</p>
-          <div className="mt-2">
-            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+      <div className="w-64 bg-gray-50 border-r border-gray-200">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-gray-900 flex items-center justify-center">
+              <span className="text-white font-bold text-sm">
+                {dashboardData.account.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900 truncate">{dashboardData.account.name}</h2>
+              <p className="text-xs text-gray-600 truncate">{dashboardData.userInfo.email}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center space-x-2">
+            <span className={`inline-flex px-2 py-1 text-xs font-medium border ${
               dashboardData.userInfo.role === "orgadmin" 
-                ? "bg-purple-100 text-purple-800"
-                : "bg-blue-100 text-blue-800"
+                ? "bg-purple-50 text-purple-800 border-purple-200"
+                : "bg-blue-50 text-blue-800 border-blue-200"
             }`}>
-              {dashboardData.userInfo.role}
+              {dashboardData.userInfo.role === "orgadmin" ? "ADMIN" : "USER"}
             </span>
             {dashboardData.isViewAsMode && (
-              <span className="ml-2 inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
-                View As Mode
+              <span className="inline-flex px-2 py-1 text-xs font-medium bg-orange-50 text-orange-800 border border-orange-200">
+                VIEW AS
               </span>
             )}
           </div>
         </div>
-        <nav className="mt-6">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`w-full flex items-center px-6 py-3 text-left hover:bg-gray-50 ${
-                activeTab === tab.id
-                  ? "bg-blue-50 border-r-2 border-blue-600 text-blue-600"
-                  : "text-gray-700"
-              }`}
-            >
-              <span className="mr-3">{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
+        
+        <nav className="p-4">
+          <div className="space-y-1">
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`w-full flex items-center px-3 py-2 text-sm font-medium text-left transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-gray-900 text-white"
+                    : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+              >
+                <span className="mr-3">{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </nav>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 overflow-auto">
-        <div className="p-8">
-          {activeTab === "dashboard" && (
-            <DashboardTab dashboardData={dashboardData} />
-          )}
-          {activeTab === "customers" && dashboardData.permissions?.customers?.view && (
-            <CustomersTab 
-              customers={customers} 
-              permissions={dashboardData.permissions.customers}
-              onAddCustomer={() => setShowAddCustomer(true)}
-            />
-          )}
-          {activeTab === "communications" && dashboardData.permissions?.communications?.sendEmail && (
-            <CommunicationsTab permissions={dashboardData.permissions.communications} />
-          )}
-          {activeTab === "users" && dashboardData.userInfo.role === "orgadmin" && dashboardData.permissions?.settings?.userManagement && (
-            <UsersTab 
-              accountId={dashboardData.currentAccount?._id || ""}
-              accountName={dashboardData.account.name}
-              onManageUsers={() => setShowUserManagement(true)}
-              sessionToken={sessionToken}
-            />
-          )}
-        </div>
+        {activeTab === "dashboard" && (
+          <IndividualDashboard />
+        )}
+        {activeTab === "customers" && (
+          <div className="p-8">
+            {!dashboardData ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-900 animate-spin"></div>
+              </div>
+            ) : !dashboardData.permissions?.customers?.view ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="text-gray-500">You don't have permission to view customers.</div>
+              </div>
+            ) : (
+              <Customers />
+            )}
+          </div>
+        )}
+        {activeTab === "communications" && (
+          <div className="p-8">
+            {!dashboardData ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-900 animate-spin"></div>
+              </div>
+            ) : !dashboardData.permissions?.communications?.sendEmail ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="text-gray-500">You don't have permission to access communications.</div>
+              </div>
+            ) : (
+              <CommunicationsTab permissions={dashboardData.permissions.communications} />
+            )}
+          </div>
+        )}
+        {activeTab === "cardbuilder" && (
+          <div className="p-8">
+            <CardBuilder />
+          </div>
+        )}
+        {activeTab === "users" && (
+          <div className="p-8">
+            {!dashboardData ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-900 animate-spin"></div>
+              </div>
+            ) : !(dashboardData.userInfo.role === "orgadmin" && dashboardData.permissions?.settings?.userManagement) ? (
+              <div className="flex justify-center items-center min-h-[400px]">
+                <div className="text-gray-500">You don't have permission to manage users.</div>
+              </div>
+            ) : (
+              <UsersTab 
+                accountId={dashboardData.currentAccount?._id || ""}
+                accountName={dashboardData.account.name}
+                onManageUsers={() => setShowUserManagement(true)}
+                sessionToken={sessionToken}
+              />
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Add Customer Modal */}
-      {showAddCustomer && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Add New Customer</h3>
-              <button
-                onClick={() => setShowAddCustomer(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            </div>
-            
-            <form onSubmit={handleAddCustomer} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={customerForm.name}
-                  onChange={(e) => setCustomerForm({...customerForm, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
-                <input
-                  type="email"
-                  required
-                  value={customerForm.email}
-                  onChange={(e) => setCustomerForm({...customerForm, email: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                <input
-                  type="tel"
-                  value={customerForm.phone}
-                  onChange={(e) => setCustomerForm({...customerForm, phone: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tags (comma-separated)</label>
-                <input
-                  type="text"
-                  value={customerForm.tags}
-                  onChange={(e) => setCustomerForm({...customerForm, tags: e.target.value})}
-                  placeholder="vip, enterprise, new"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <textarea
-                  value={customerForm.notes}
-                  onChange={(e) => setCustomerForm({...customerForm, notes: e.target.value})}
-                  rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAddCustomer(false)}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-                >
-                  Add Customer
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
@@ -319,124 +257,7 @@ function DashboardTab({ dashboardData }: { dashboardData: any }) {
   );
 }
 
-function CustomersTab({ customers, permissions, onAddCustomer }: { 
-  customers: any[] | undefined; 
-  permissions: any;
-  onAddCustomer: () => void;
-}) {
-  if (!customers) {
-    return <div>Loading customers...</div>;
-  }
 
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
-        {permissions.create && (
-          <button
-            onClick={onAddCustomer}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            Add Customer
-          </button>
-        )}
-      </div>
-
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Contact
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tags
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {customers.map((customer) => (
-                <tr key={customer._id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{customer.name}</div>
-                    {customer.notes && (
-                      <div className="text-sm text-gray-500">{customer.notes}</div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{customer.email}</div>
-                    {customer.phone && (
-                      <div className="text-sm text-gray-500">{customer.phone}</div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      customer.status === "active" 
-                        ? "bg-green-100 text-green-800"
-                        : "bg-red-100 text-red-800"
-                    }`}>
-                      {customer.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex flex-wrap gap-1">
-                      {customer.tags.map((tag: string, index: number) => (
-                        <span
-                          key={index}
-                          className="inline-flex px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex space-x-2">
-                      {permissions.edit && (
-                        <button className="text-blue-600 hover:text-blue-900">
-                          Edit
-                        </button>
-                      )}
-                      {permissions.delete && (
-                        <button className="text-red-600 hover:text-red-900">
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {customers.length === 0 && (
-        <div className="text-center py-12">
-          <div className="text-gray-500">No customers found.</div>
-          {permissions.create && (
-            <button
-              onClick={onAddCustomer}
-              className="mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-            >
-              Add Your First Customer
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function CommunicationsTab({ permissions }: { permissions: any }) {
   return (
